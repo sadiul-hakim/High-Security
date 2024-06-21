@@ -8,8 +8,10 @@ import org.apache.logging.log4j.util.Strings;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StreamUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.ContentCachingRequestWrapper;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -48,20 +50,23 @@ public class SqlInjectionFilter extends OncePerRequestFilter {
         String queryParams = URLDecoder.decode(Optional.ofNullable(request.getQueryString()).orElse(Strings.EMPTY), StandardCharsets.UTF_8);
         String pathVariable = URLDecoder.decode(Optional.ofNullable(request.getRequestURI()).orElse(Strings.EMPTY), StandardCharsets.UTF_8);
 
+        // First cache the request then get the request body
+        var requestWrapper = new CachedBodyHttpServletRequest(request);
+
         StringBuilder sb = new StringBuilder();
         String line;
-        try (BufferedReader reader = request.getReader()) {
+        try (BufferedReader reader = requestWrapper.getReader()) {
             while ((line = reader.readLine()) != null) {
                 sb.append(line);
             }
         }
-
         String requestBody = sb.toString();
+
         requestBody = requestBody.replaceAll("\\r\\n|\\r|\\n", Strings.EMPTY);
 
-
         if (isSqlInjectionSafe(queryParams) && isSqlInjectionSafe(pathVariable) && isSqlInjectionSafe(requestBody)) {
-            filterChain.doFilter(request, response);
+            filterChain.doFilter(requestWrapper, response);
+            return;
         }
 
         response.setStatus(HttpStatus.BAD_REQUEST.value());
