@@ -1,4 +1,4 @@
-package org.learn.security_course.sql_injection.filter;
+package org.learn.security_course.xss;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -16,36 +16,46 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
 
 @Component
-public class SqlInjectionFilter extends OncePerRequestFilter {
+public class XSSRequestFilter extends OncePerRequestFilter {
+    private static final String[] XSS_REGEX = {
+            "onclick|onkeypress|onkeydown|onkeyup|onerror|onchange|onmouseover|onmouseout|onblur|onselect|onfocus|onerror",
+            "<\s*script\b[^>]*>(.*?)<\s*/script\b[^>]*>", "script\s+src\s*=", "<\s*script\b[^>]*>",
+            "<\s*/script\b[^>]*>", "javascript.*:"};
 
-    private static final String[] SQL_REGEX = {
-            "(?i)(.*)(\\b)+SELECT(\\b)+\\s.*(\\b)+FROM(\\b)+\\s.*(.*)",
-            "(?i)(.*)(\\b)+DROP(\\b)+\\s.*(.*)",
-            "(?i)(.*)(\\b)+CREATE(\\b)+\\s.*(.*)",
-            "(?i)(.*)(\\b)+ALTER(\\b)+\\s.*(.*)",
-            "(?i)(.*)(\\b)+TRUNCATE(\\b)+\\s.*(.*)",
-            "(?i)(.*)(\\b)+RENAME(\\b)+\\s.*(.*)",
-            "(?i)(.*)(\\b)+COMMENT(\\b)+\\s.*(.*)"
-    };
+    private final List<Pattern> xssValidationPattern;
 
-    private final CopyOnWriteArrayList<Pattern> sqlValidationPattern;
+    public XSSRequestFilter() {
+        xssValidationPattern = new ArrayList<>();
 
-    public SqlInjectionFilter() {
-        sqlValidationPattern = new CopyOnWriteArrayList<>();
-
-        for (String regex : SQL_REGEX) {
-            Pattern pattern = Pattern.compile(regex, Pattern.CASE_INSENSITIVE);
-            sqlValidationPattern.add(pattern);
+        for (String xss : XSS_REGEX) {
+            var pattern = Pattern.compile(xss);
+            xssValidationPattern.add(pattern);
         }
+    }
+
+    private boolean isXssSafe(String stringToValidate) {
+        if (!StringUtils.hasText(stringToValidate)) {
+            return true;
+        }
+
+        for (var pattern : xssValidationPattern) {
+            if (pattern.matcher(stringToValidate).find()) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+
         String queryParams = URLDecoder.decode(Optional.ofNullable(request.getQueryString()).orElse(Strings.EMPTY), StandardCharsets.UTF_8);
         String pathVariable = URLDecoder.decode(Optional.ofNullable(request.getRequestURI()).orElse(Strings.EMPTY), StandardCharsets.UTF_8);
 
@@ -60,30 +70,15 @@ public class SqlInjectionFilter extends OncePerRequestFilter {
             }
         }
         String requestBody = sb.toString();
-
         requestBody = requestBody.replaceAll("\\r\\n|\\r|\\n", Strings.EMPTY);
 
-        if (isSqlInjectionSafe(queryParams) && isSqlInjectionSafe(pathVariable) && isSqlInjectionSafe(requestBody)) {
+        if (isXssSafe(queryParams) && isXssSafe(pathVariable) && isXssSafe(requestBody)) {
             filterChain.doFilter(requestWrapper, response);
             return;
         }
 
         response.setStatus(HttpStatus.BAD_REQUEST.value());
         response.setContentType(MediaType.TEXT_PLAIN_VALUE);
-        response.getWriter().print("You bad boy, Sql Injection detected!");
-    }
-
-    private boolean isSqlInjectionSafe(String stringToValidate) {
-        if (!StringUtils.hasText(stringToValidate)) {
-            return true;
-        }
-
-        for (var pattern : sqlValidationPattern) {
-            if (pattern.matcher(stringToValidate).find()) {
-                return false;
-            }
-        }
-
-        return true;
+        response.getWriter().print("You bad boy, XSS detected!");
     }
 }
